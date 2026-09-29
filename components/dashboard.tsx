@@ -4,34 +4,12 @@ import { useEffect, useState } from "react";
 import type { CapturedRequest } from "@/lib/types";
 import { toCurl } from "@/lib/curl";
 import { ReplayPanel } from "@/components/replay-panel";
+import { SignaturePanel } from "@/components/signature-panel";
+import { DiffView } from "@/components/diff-view";
+import { SettingsPanel } from "@/components/settings-panel";
+import { METHOD_COLORS, formatBytes, prettyBody } from "@/lib/format";
 
-const METHOD_COLORS: Record<string, string> = {
-  GET: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
-  POST: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300",
-  PUT: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
-  PATCH: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
-  DELETE: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
-};
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function prettyBody(req: CapturedRequest): string {
-  if (req.bodyEncoding === "base64") {
-    return `Binary content (${formatBytes(req.bodySize)}), base64-encoded. Raw tab shows the encoded bytes.`;
-  }
-  if (!req.body) return "(empty body)";
-  try {
-    return JSON.stringify(JSON.parse(req.body), null, 2);
-  } catch {
-    return req.body;
-  }
-}
-
-type Tab = "pretty" | "raw" | "headers" | "replay";
+type Tab = "pretty" | "raw" | "headers" | "replay" | "signature";
 
 export function Dashboard({ slug, ingestUrl }: { slug: string; ingestUrl: string }) {
   const [items, setItems] = useState<CapturedRequest[]>([]);
@@ -39,6 +17,9 @@ export function Dashboard({ slug, ingestUrl }: { slug: string; ingestUrl: string
   const [tab, setTab] = useState<Tab>("pretty");
   const [copied, setCopied] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareIds, setCompareIds] = useState<string[]>([]);
 
   // Load existing history once on mount.
   useEffect(() => {
@@ -67,11 +48,23 @@ export function Dashboard({ slug, ingestUrl }: { slug: string; ingestUrl: string
   }, [slug]);
 
   const selected = items.find((r) => r.id === selectedId) ?? items[0] ?? null;
+  const diffPair =
+    compareIds.length === 2
+      ? ([items.find((r) => r.id === compareIds[0]), items.find((r) => r.id === compareIds[1])] as const)
+      : null;
 
   async function copy(text: string, label: string) {
     await navigator.clipboard.writeText(text);
     setCopied(label);
     setTimeout(() => setCopied(null), 1500);
+  }
+
+  function toggleCompare(id: string) {
+    setCompareIds((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      if (prev.length >= 2) return [prev[1], id];
+      return [...prev, id];
+    });
   }
 
   return (
@@ -97,6 +90,25 @@ export function Dashboard({ slug, ingestUrl }: { slug: string; ingestUrl: string
             {connected ? "Live" : "Connecting..."}
           </span>
           <span className="text-xs text-zinc-400">{items.length} requests</span>
+          <button
+            onClick={() => {
+              setCompareMode((v) => !v);
+              setCompareIds([]);
+            }}
+            className={`rounded border px-3 py-1.5 text-xs font-medium ${
+              compareMode
+                ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
+                : "border-zinc-300 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+            }`}
+          >
+            Compare
+          </button>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="rounded border border-zinc-300 px-3 py-1.5 text-xs font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+          >
+            Settings
+          </button>
         </div>
       </header>
 
@@ -109,34 +121,52 @@ export function Dashboard({ slug, ingestUrl }: { slug: string; ingestUrl: string
             </p>
           ) : (
             items.map((r) => (
-              <button
+              <div
                 key={r.id}
-                onClick={() => setSelectedId(r.id)}
-                className={`flex w-full flex-col gap-1 border-b border-zinc-100 px-4 py-3 text-left hover:bg-zinc-100 dark:border-zinc-900 dark:hover:bg-zinc-900 ${
+                className={`flex w-full items-start gap-2 border-b border-zinc-100 px-4 py-3 hover:bg-zinc-100 dark:border-zinc-900 dark:hover:bg-zinc-900 ${
                   selected?.id === r.id ? "bg-zinc-100 dark:bg-zinc-900" : ""
                 }`}
               >
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`rounded px-1.5 py-0.5 text-xs font-semibold ${METHOD_COLORS[r.method] ?? "bg-zinc-100 text-zinc-700"}`}
-                  >
-                    {r.method}
+                {compareMode && (
+                  <input
+                    type="checkbox"
+                    checked={compareIds.includes(r.id)}
+                    onChange={() => toggleCompare(r.id)}
+                    className="mt-1 shrink-0"
+                  />
+                )}
+                <button
+                  onClick={() => setSelectedId(r.id)}
+                  className="flex min-w-0 flex-1 flex-col gap-1 text-left"
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`rounded px-1.5 py-0.5 text-xs font-semibold ${METHOD_COLORS[r.method] ?? "bg-zinc-100 text-zinc-700"}`}
+                    >
+                      {r.method}
+                    </span>
+                    <span className="truncate text-sm text-zinc-700 dark:text-zinc-300">
+                      {r.path}
+                    </span>
+                  </div>
+                  <span className="text-xs text-zinc-400">
+                    {new Date(r.receivedAt).toLocaleTimeString()} &middot;{" "}
+                    {formatBytes(r.bodySize)}
                   </span>
-                  <span className="truncate text-sm text-zinc-700 dark:text-zinc-300">
-                    {r.path}
-                  </span>
-                </div>
-                <span className="text-xs text-zinc-400">
-                  {new Date(r.receivedAt).toLocaleTimeString()} &middot;{" "}
-                  {formatBytes(r.bodySize)}
-                </span>
-              </button>
+                </button>
+              </div>
             ))
           )}
         </aside>
 
         <main className="flex-1 overflow-y-auto p-6">
-          {!selected ? (
+          {compareMode && diffPair && diffPair[0] && diffPair[1] ? (
+            <DiffView a={diffPair[0]} b={diffPair[1]} />
+          ) : compareMode ? (
+            <p className="text-sm text-zinc-500">
+              Select two requests from the list to compare them.
+            </p>
+          ) : !selected ? (
             <p className="text-sm text-zinc-500">
               Select a request to see its details.
             </p>
@@ -162,7 +192,7 @@ export function Dashboard({ slug, ingestUrl }: { slug: string; ingestUrl: string
               </div>
 
               <div className="flex gap-1 border-b border-zinc-200 dark:border-zinc-800">
-                {(["pretty", "raw", "headers", "replay"] as Tab[]).map((t) => (
+                {(["pretty", "raw", "headers", "replay", "signature"] as Tab[]).map((t) => (
                   <button
                     key={t}
                     onClick={() => setTab(t)}
@@ -205,6 +235,9 @@ export function Dashboard({ slug, ingestUrl }: { slug: string; ingestUrl: string
               {tab === "replay" && (
                 <ReplayPanel key={selected.id} requestId={selected.id} />
               )}
+              {tab === "signature" && (
+                <SignaturePanel key={selected.id} requestId={selected.id} />
+              )}
 
               <div className="text-xs text-zinc-400">
                 Received {new Date(selected.receivedAt).toLocaleString()} from{" "}
@@ -214,6 +247,10 @@ export function Dashboard({ slug, ingestUrl }: { slug: string; ingestUrl: string
           )}
         </main>
       </div>
+
+      {settingsOpen && (
+        <SettingsPanel slug={slug} onClose={() => setSettingsOpen(false)} />
+      )}
     </div>
   );
 }
