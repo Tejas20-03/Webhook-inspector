@@ -2,17 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { endpoints, requests } from "@/lib/db/schema";
+import { checkRateLimit } from "@/lib/rate-limit";
+import { getClientIp } from "@/lib/request-ip";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const MAX_BODY_BYTES = 1024 * 1024; // 1 MB
 const MAX_DELAY_MS = 10_000; // cap artificial delay so slots can't be tied up forever
-
-function getClientIp(req: NextRequest): string | null {
-  const forwardedFor = req.headers.get("x-forwarded-for");
-  if (forwardedFor) return forwardedFor.split(",")[0].trim();
-  return req.headers.get("x-real-ip");
-}
+const IP_LIMIT_PER_MIN = 120; // abuse guard across all endpoints from one IP
+const SLUG_LIMIT_PER_MIN = 300; // generous — real webhook senders can burst
 
 function decodeBody(buf: ArrayBuffer): { body: string; encoding: "utf8" | "base64" } {
   const bytes = new Uint8Array(buf);
@@ -31,6 +30,19 @@ async function handle(req: NextRequest, slug: string) {
 
   if (!endpoint) {
     return NextResponse.json({ error: "Endpoint not found" }, { status: 404 });
+  }
+
+  const ip = getClientIp(req);
+  const [ipLimit, slugLimit] = await Promise.all([
+    ip ? checkRateLimit(`ip:${ip}`, IP_LIMIT_PER_MIN) : null,
+    checkRateLimit(`slug:${slug}`, SLUG_LIMIT_PER_MIN),
+  ]);
+
+  if ((ipLimit && !ipLimit.allowed) || !slugLimit.allowed) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded. Try again in a minute." },
+      { status: 429, headers: { "retry-after": "60" } }
+    );
   }
 
   const rawBody = await req.arrayBuffer();

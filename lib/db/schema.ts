@@ -5,6 +5,7 @@ import {
   integer,
   jsonb,
   uuid,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 
 export const endpoints = pgTable("endpoints", {
@@ -42,6 +43,16 @@ export const requests = pgTable("requests", {
     .notNull()
     .defaultNow(),
 });
+
+export const rateLimits = pgTable(
+  "rate_limits",
+  {
+    key: text("key").notNull(), // e.g. "ip:1.2.3.4" or "slug:abc123"
+    windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+    count: integer("count").notNull().default(0),
+  },
+  (table) => [primaryKey({ columns: [table.key, table.windowStart] })]
+);
 
 export const replays = pgTable("replays", {
   id: uuid("id").primaryKey().defaultRandom(),

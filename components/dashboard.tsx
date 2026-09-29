@@ -1,10 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { CapturedRequest } from "@/lib/types";
 import { toCurl } from "@/lib/curl";
-
-const POLL_INTERVAL_MS = 3000;
+import { ReplayPanel } from "@/components/replay-panel";
 
 const METHOD_COLORS: Record<string, string> = {
   GET: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
@@ -32,38 +31,40 @@ function prettyBody(req: CapturedRequest): string {
   }
 }
 
-type Tab = "pretty" | "raw" | "headers";
+type Tab = "pretty" | "raw" | "headers" | "replay";
 
-export function Dashboard({ slug }: { slug: string }) {
+export function Dashboard({ slug, ingestUrl }: { slug: string; ingestUrl: string }) {
   const [items, setItems] = useState<CapturedRequest[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("pretty");
   const [copied, setCopied] = useState<string | null>(null);
-  const lastReceivedAt = useRef<string | null>(null);
-  const ingestUrl =
-    typeof window !== "undefined" ? `${window.location.origin}/h/${slug}` : "";
+  const [connected, setConnected] = useState(false);
 
-  const poll = useCallback(async () => {
-    const url = new URL(`/api/endpoints/${slug}/requests`, window.location.origin);
-    if (lastReceivedAt.current) url.searchParams.set("since", lastReceivedAt.current);
-
-    const res = await fetch(url);
-    if (!res.ok) return;
-    const { requests: fresh } = (await res.json()) as { requests: CapturedRequest[] };
-    if (fresh.length === 0) return;
-
-    lastReceivedAt.current = fresh[0].receivedAt;
-    setItems((prev) => [...fresh, ...prev]);
+  // Load existing history once on mount.
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/endpoints/${slug}/requests`)
+      .then((res) => res.json())
+      .then((data: { requests: CapturedRequest[] }) => {
+        if (!cancelled) setItems(data.requests);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [slug]);
 
+  // Live updates via Server-Sent Events. EventSource reconnects automatically
+  // (using Last-Event-ID) if the connection drops or the server closes it.
   useEffect(() => {
-    const interval = setInterval(poll, POLL_INTERVAL_MS);
-    const initial = setTimeout(poll, 0);
-    return () => {
-      clearInterval(interval);
-      clearTimeout(initial);
-    };
-  }, [poll]);
+    const es = new EventSource(`/api/endpoints/${slug}/stream`);
+    es.onopen = () => setConnected(true);
+    es.onerror = () => setConnected(false);
+    es.addEventListener("request", (e: MessageEvent) => {
+      const row = JSON.parse(e.data) as CapturedRequest;
+      setItems((prev) => (prev.some((r) => r.id === row.id) ? prev : [row, ...prev]));
+    });
+    return () => es.close();
+  }, [slug]);
 
   const selected = items.find((r) => r.id === selectedId) ?? items[0] ?? null;
 
@@ -88,7 +89,15 @@ export function Dashboard({ slug }: { slug: string }) {
             {copied === "url" ? "Copied!" : "Copy"}
           </button>
         </div>
-        <span className="text-xs text-zinc-400">{items.length} requests</span>
+        <div className="flex items-center gap-3">
+          <span className="flex items-center gap-1.5 text-xs text-zinc-400">
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-green-500" : "bg-zinc-400"}`}
+            />
+            {connected ? "Live" : "Connecting..."}
+          </span>
+          <span className="text-xs text-zinc-400">{items.length} requests</span>
+        </div>
       </header>
 
       <div className="flex flex-1 overflow-hidden">
@@ -153,7 +162,7 @@ export function Dashboard({ slug }: { slug: string }) {
               </div>
 
               <div className="flex gap-1 border-b border-zinc-200 dark:border-zinc-800">
-                {(["pretty", "raw", "headers"] as Tab[]).map((t) => (
+                {(["pretty", "raw", "headers", "replay"] as Tab[]).map((t) => (
                   <button
                     key={t}
                     onClick={() => setTab(t)}
@@ -192,6 +201,9 @@ export function Dashboard({ slug }: { slug: string }) {
                     </div>
                   ))}
                 </div>
+              )}
+              {tab === "replay" && (
+                <ReplayPanel key={selected.id} requestId={selected.id} />
               )}
 
               <div className="text-xs text-zinc-400">
