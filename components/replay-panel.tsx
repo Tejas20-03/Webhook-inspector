@@ -51,11 +51,13 @@ export function ReplayPanel({ requestId }: { requestId: string }) {
           value={targetUrl}
           onChange={(e) => setTargetUrl(e.target.value)}
           placeholder="https://your-local-server.example/webhook"
+          data-testid="replay-target-url"
           className="flex-1 rounded border border-zinc-300 bg-transparent px-3 py-1.5 text-sm dark:border-zinc-700"
         />
         <button
           onClick={sendReplay}
           disabled={sending || !targetUrl.trim()}
+          data-testid="replay-submit"
           className="rounded bg-zinc-900 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900"
         >
           {sending ? "Replaying..." : "Replay"}
@@ -80,9 +82,11 @@ export function ReplayPanel({ requestId }: { requestId: string }) {
                 </span>
               </div>
               {r.error ? (
-                <span className="text-red-600">{r.error}</span>
+                <span data-testid="replay-result" className="text-red-600">
+                  {r.error}
+                </span>
               ) : (
-                <span className="text-zinc-700 dark:text-zinc-300">
+                <span data-testid="replay-result" className="text-zinc-700 dark:text-zinc-300">
                   {r.statusCode} &middot; {r.durationMs}ms
                   {r.responseSnippet ? ` — ${r.responseSnippet.slice(0, 120)}` : ""}
                 </span>

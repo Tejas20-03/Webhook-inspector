@@ -50,6 +50,29 @@ curl -X POST http://localhost:3000/h/<slug> \
 
 **Abuse prevention.** Body size is capped at 1MB. Ingest is rate-limited per-IP and per-slug; replay is rate-limited per-IP — both via a Postgres-backed fixed-window counter (`lib/rate-limit.ts`), which is simpler to reason about than a sliding window and accurate enough for this. Anonymous endpoints expire after 24 hours, and requests older than 24 hours are pruned regardless, via a cron-triggered cleanup route (`app/api/cron/cleanup/route.ts`, wired up in `vercel.json`).
 
+## Testing
+
+```bash
+npm test          # unit tests (signature verification, SSRF guard) — vitest
+npm run test:e2e  # create endpoint → capture live → replay — playwright
+```
+
+The SSRF guard is tested against a real list of hostile targets: cloud metadata (`169.254.169.254`), loopback (`127.0.0.1`, `::1`), every RFC1918 private range, carrier-grade NAT, link-local, multicast, and an IPv4-mapped IPv6 address used to smuggle a private IPv4 target — all confirmed blocked. Signature verification is tested against self-computed Stripe/GitHub/Twilio signatures, correct and tampered, including a stale-timestamp case for Stripe.
+
+CI (`.github/workflows/ci.yml`) runs lint, typecheck, unit tests, and a build on every push — all self-contained, no database needed. The e2e test needs a real Neon `DATABASE_URL` (the app's DB client only speaks Neon's HTTP proxy protocol, not plain Postgres, so a throwaway container DB in CI won't work), so it's run locally rather than wired into CI.
+
+## Load test
+
+```bash
+BASE_URL=http://localhost:3000 k6 run load-test/ingest.js
+```
+
+Measured against a production build (`next build && next start`) on a single machine, hitting a Neon free-tier database, at a target rate of 15 requests/second for 30 seconds (448 requests attempted):
+
+- **Zero server errors** — every response was either `200` or `429`, even under sustained load past the configured limit.
+- **The rate limiter engaged exactly as designed**: 144 requests got through, 303 were `429`d — consistent with the 120/min-per-IP cap (a single test machine is a single IP), including the fixed-window's known allow-a-burst-at-the-boundary behavior.
+- **p95 latency for allowed requests: ~3s**, with a floor around 830ms. That's not application code — a single unloaded request round-trips in about 300ms — it's Neon's free-tier compute serializing concurrent connections opened by the `neon-http` driver (which opens one HTTP connection per query rather than pooling). Under concurrency, the ingest route's two DB round trips (rate-limit check, then insert) queue up waiting on Neon rather than on anything in this codebase. A pooled connection string, or Neon's paid tier with more concurrent-connection headroom, would be the fix — worth knowing before treating a number like this as "the app's" latency rather than the database tier's.
+
 ## Known limitations
 
 - The fixed-window rate limiter allows a short burst at window boundaries (e.g. near the top of a minute) — a sliding-window or token-bucket limiter would tighten this, at the cost of more complexity.

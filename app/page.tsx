@@ -36,6 +36,7 @@ export default function Home() {
         <button
           onClick={createEndpoint}
           disabled={loading}
+          data-testid="create-endpoint"
           className="flex h-12 items-center justify-center rounded-full bg-zinc-900 px-8 text-base font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
         >
           {loading ? "Creating..." : "Create an endpoint"}

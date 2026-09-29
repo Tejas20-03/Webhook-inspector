@@ -137,6 +137,7 @@ export function Dashboard({ slug, ingestUrl }: { slug: string; ingestUrl: string
                 )}
                 <button
                   onClick={() => setSelectedId(r.id)}
+                  data-testid="request-item"
                   className="flex min-w-0 flex-1 flex-col gap-1 text-left"
                 >
                   <div className="flex items-center gap-2">
@@ -196,6 +197,7 @@ export function Dashboard({ slug, ingestUrl }: { slug: string; ingestUrl: string
                   <button
                     key={t}
                     onClick={() => setTab(t)}
+                    data-testid={`tab-${t}`}
                     className={`px-3 py-2 text-sm capitalize ${
                       tab === t
                         ? "border-b-2 border-zinc-900 font-medium text-zinc-900 dark:border-zinc-100 dark:text-zinc-100"
