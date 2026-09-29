@@ -48,3 +48,6 @@ next-env.d.ts
 # claude code
 CLAUDE.md
 .claude/
+
+.vercel
+.env*

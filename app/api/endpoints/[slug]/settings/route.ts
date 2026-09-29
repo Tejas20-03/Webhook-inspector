@@ -9,10 +9,13 @@ export const runtime = "nodejs";
 const MAX_DELAY_MS = 10_000;
 const MAX_BODY_LEN = 100_000;
 
+// no embedded NUL — Postgres' text type rejects it outright, valid UTF-8 or not
+const noNul = (v: string) => !v.includes("\0");
+
 const settingsSchema = z.object({
   responseStatus: z.number().int().min(100).max(599),
-  responseBody: z.string().max(MAX_BODY_LEN),
-  responseContentType: z.string().min(1).max(200),
+  responseBody: z.string().max(MAX_BODY_LEN).refine(noNul, "Invalid characters in response body"),
+  responseContentType: z.string().min(1).max(200).refine(noNul, "Invalid content type"),
   responseDelayMs: z.number().int().min(0).max(MAX_DELAY_MS),
 });
 

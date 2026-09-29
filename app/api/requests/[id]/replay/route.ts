@@ -12,7 +12,8 @@ export const runtime = "nodejs";
 const REPLAY_LIMIT_PER_MIN = 20;
 
 const bodySchema = z.object({
-  targetUrl: z.string().min(1).max(2048),
+  // no embedded NUL — Postgres' text type rejects it outright, valid UTF-8 or not
+  targetUrl: z.string().min(1).max(2048).refine((v) => !v.includes("\0"), "Invalid URL"),
 });
 
 type Params = { params: Promise<{ id: string }> };

@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { endpoints, requests } from "@/lib/db/schema";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getClientIp } from "@/lib/request-ip";
+import { decodeBody } from "@/lib/decode-body";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,16 +13,6 @@ const MAX_BODY_BYTES = 1024 * 1024; // 1 MB
 const MAX_DELAY_MS = 10_000; // cap artificial delay so slots can't be tied up forever
 const IP_LIMIT_PER_MIN = 120; // abuse guard across all endpoints from one IP
 const SLUG_LIMIT_PER_MIN = 300; // generous — real webhook senders can burst
-
-function decodeBody(buf: ArrayBuffer): { body: string; encoding: "utf8" | "base64" } {
-  const bytes = new Uint8Array(buf);
-  try {
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    return { body: text, encoding: "utf8" };
-  } catch {
-    return { body: Buffer.from(bytes).toString("base64"), encoding: "base64" };
-  }
-}
 
 async function handle(req: NextRequest, slug: string) {
   const endpoint = await db.query.endpoints.findFirst({

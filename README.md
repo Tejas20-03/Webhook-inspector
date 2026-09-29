@@ -73,6 +73,12 @@ Measured against a production build (`next build && next start`) on a single mac
 - **The rate limiter engaged exactly as designed**: 144 requests got through, 303 were `429`d — consistent with the 120/min-per-IP cap (a single test machine is a single IP), including the fixed-window's known allow-a-burst-at-the-boundary behavior.
 - **p95 latency for allowed requests: ~3s**, with a floor around 830ms. That's not application code — a single unloaded request round-trips in about 300ms — it's Neon's free-tier compute serializing concurrent connections opened by the `neon-http` driver (which opens one HTTP connection per query rather than pooling). Under concurrency, the ingest route's two DB round trips (rate-limit check, then insert) queue up waiting on Neon rather than on anything in this codebase. A pooled connection string, or Neon's paid tier with more concurrent-connection headroom, would be the fix — worth knowing before treating a number like this as "the app's" latency rather than the database tier's.
 
+## Deployment
+
+Live at **https://webhook-rose-pi.vercel.app**, deployed on Vercel (Hobby plan — the cron in `vercel.json` runs once daily, since Hobby doesn't allow finer schedules). Set `DATABASE_URL` and `CRON_SECRET` as project environment variables before deploying.
+
+Observed on Vercel specifically (not reproduced locally): the SSE stream occasionally redelivers the same event more than once — likely Vercel's streaming/proxy layer retrying the function invocation under the hood. Harmless here because the dashboard already deduplicates incoming events by request ID (originally added to handle the overlap between the initial history fetch and the stream's own backdate window on reconnect), but worth knowing if you see a request's `id` show up twice in raw SSE output.
+
 ## Known limitations
 
 - The fixed-window rate limiter allows a short burst at window boundaries (e.g. near the top of a minute) — a sliding-window or token-bucket limiter would tighten this, at the cost of more complexity.

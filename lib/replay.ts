@@ -1,12 +1,32 @@
 import http from "node:http";
 import https from "node:https";
+import zlib from "node:zlib";
 import { performance } from "node:perf_hooks";
 import { resolveSafe, validateTargetUrl, SsrfError } from "@/lib/ssrf";
 
 const REPLAY_TIMEOUT_MS = 10_000;
 const MAX_RESPONSE_SNIPPET_BYTES = 2000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024; // hard cap so a huge/malicious response can't exhaust memory
-const STRIPPED_HEADERS = new Set(["host", "content-length", "connection"]);
+// accept-encoding is stripped so targets reply uncompressed — we only need a
+// short text snippet, not a byte-perfect passthrough, and this avoids having
+// to speak every compression scheme a target might pick
+const STRIPPED_HEADERS = new Set(["host", "content-length", "connection", "accept-encoding"]);
+
+export function decodeResponseBody(chunks: Buffer[], contentEncoding: string | undefined): string {
+  const raw = Buffer.concat(chunks);
+  let decoded = raw;
+  try {
+    if (contentEncoding === "gzip") decoded = zlib.gunzipSync(raw);
+    else if (contentEncoding === "br") decoded = zlib.brotliDecompressSync(raw);
+    else if (contentEncoding === "deflate") decoded = zlib.inflateSync(raw);
+  } catch {
+    decoded = raw; // fall back to the raw bytes rather than fail the whole replay
+  }
+  // Postgres' text type rejects embedded NUL bytes outright, valid UTF-8 or
+  // not, so they're stripped — this is just a display snippet, not the
+  // original bytes (those live on the captured request, untouched).
+  return decoded.toString("utf8").replace(/\0/g, "");
+}
 
 export type ReplayResult = {
   statusCode: number | null;
@@ -70,21 +90,20 @@ export async function replayRequest(params: {
       const req = transport.request(
         requestOptions,
         (res) => {
-          let snippet = "";
+          const chunks: Buffer[] = [];
           let receivedBytes = 0;
           res.on("data", (chunk: Buffer) => {
             receivedBytes += chunk.length;
-            if (snippet.length < MAX_RESPONSE_SNIPPET_BYTES) {
-              snippet += chunk.toString("utf8");
-            }
+            if (receivedBytes <= MAX_RESPONSE_BYTES) chunks.push(chunk);
             if (receivedBytes > MAX_RESPONSE_BYTES) {
               res.destroy(new Error("Response exceeded size limit"));
             }
           });
           res.on("end", () => {
+            const text = decodeResponseBody(chunks, res.headers["content-encoding"]);
             resolve({
               statusCode: res.statusCode ?? 0,
-              body: snippet.slice(0, MAX_RESPONSE_SNIPPET_BYTES),
+              body: text.slice(0, MAX_RESPONSE_SNIPPET_BYTES),
             });
           });
           res.on("error", reject);
